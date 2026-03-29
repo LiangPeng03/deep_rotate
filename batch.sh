@@ -24,6 +24,7 @@ for model in "${models[@]}"; do
          --k_bits 16 \
          --w_asym \
          --w_clip \
+         --act_order \
          --asym_calibrate \
          --enable_aq_calibration \
          --rotate \

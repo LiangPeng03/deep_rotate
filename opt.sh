@@ -1,6 +1,6 @@
 #!/bin/bash
 
-gpu_id=0
+gpu_id=1
 export CUDA_VISIBLE_DEVICES=$gpu_id
 
 $HOME/.conda/envs/awq/bin/python main.py --model facebook/opt-125m \
@@ -13,6 +13,7 @@ $HOME/.conda/envs/awq/bin/python main.py --model facebook/opt-125m \
  --w_asym \
  --asym_calibrate \
  --w_clip \
+ --act_order \
  --rotate \
  --rotate_mode random \
  --rotation_seed 0
