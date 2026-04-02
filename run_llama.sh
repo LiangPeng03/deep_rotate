@@ -1,6 +1,6 @@
 #!/bin/bash
 
-gpu_id=0,1
+gpu_id=1
 export CUDA_VISIBLE_DEVICES=$gpu_id
 
 # python main.py --model meta-llama/Meta-Llama-3-8B  \

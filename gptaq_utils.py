@@ -347,15 +347,16 @@ def gptaq_fwrd(model, dataloader, dev, args):
                     Qq = X @ Wq_quant_h[h].t()   # [N, d]
                     Kq = X @ Wk_quant_h[h].t()   # [N, d]
 
-                    QtQ  = Q.t()  @ Q            # [d, d]
-                    KtK  = K.t()  @ K
-                    QtQq = Q.t()  @ Qq
-                    KqtK = Kq.t() @ K
-                    KqtKq= Kq.t() @ Kq
+                    QtQ   = Q.t()  @ Q            # [d, d]
+                    KtK   = K.t()  @ K
+                    QtQq  = Q.t()  @ Qq
+                    QqtQq = Qq.t() @ Qq
+                    KqtK  = Kq.t() @ K
+                    KqtKq = Kq.t() @ Kq
 
                     # ||QK^T - Q'K'^T||_F^2 / N^2  (MSE of attention logits)
                     N = Q.shape[0]
-                    mse = ((KtK @ QtQ).trace().item() - 2 * (KqtK @ QtQq).trace().item() + (KqtKq @ QtQq).trace().item()) / (N * N)
+                    mse = ((KtK @ QtQ).trace().item() - 2 * (KqtK @ QtQq).trace().item() + (KqtKq @ QqtQq).trace().item()) / (N * N)
                     qk_records.append((i, h, mse))
 
                 del Wq_orig, Wk_orig, Wq_quant, Wk_quant

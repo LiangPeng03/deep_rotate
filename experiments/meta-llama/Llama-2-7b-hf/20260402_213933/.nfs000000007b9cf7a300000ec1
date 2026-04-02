@@ -30,8 +30,8 @@ Arguments:
  'rotate': True,
  'rotate_mode': 'hadamard',
  'rotation_seed': -1,
- 'save_name': '20260402_191457',
- 'save_path': '/home/pengliang/Desktop/2gptaq/experiments/meta-llama/Llama-2-7b-hf/20260402_191457',
+ 'save_name': '20260402_213933',
+ 'save_path': '/home/pengliang/Desktop/2gptaq/experiments/meta-llama/Llama-2-7b-hf/20260402_213933',
  'save_qmodel_path': None,
  'seed': 0,
  'static_groups': False,
@@ -57,12 +57,3 @@ Arguments:
 ---> Loading meta-llama/Llama-2-7b-hf Model with seq_len: 2048
 GPU memory (from rotate_model): 2.10 -> 0.14 GB (-1.95 GB)
 GPU memory (from main): 1.24 -> 0.02 GB (-1.22 GB)
------GPTAQ Quantization-----
-QKT analysis saved to /home/pengliang/Desktop/2gptaq/experiments/meta-llama/Llama-2-7b-hf/20260402_191457/QK.csv
-GPU memory (from gptaq_fwrd): 6.28 -> 6.28 GB (0.00 GB)
------GPTAQ Quantization Done-----
-
-
-WIKITEXT2 PPL: 6.114
-
-WIKITEXT2 PPL: 8.102
