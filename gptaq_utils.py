@@ -8,6 +8,8 @@ import quant_utils
 import model_utils
 import logging
 import functools
+import csv
+import os
 
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
@@ -228,6 +230,7 @@ def gptaq_fwrd(model, dataloader, dev, args):
     position_ids = cache.get('position_ids') if is_llama else None
 
     quantizers = {}
+    qk_records = [] if args.QK_quant else None
     
     # Define sequential layers based on model type
     if is_llama:
@@ -308,6 +311,13 @@ def gptaq_fwrd(model, dataloader, dev, args):
                     gptq[name].H = gptq[first_module_name].H
                     gptq[name].dXXT = gptq[first_module_name].dXXT
 
+            # Save original Wq, Wk before quantization if QK_quant is enabled
+            Wq_orig = None
+            Wk_orig = None
+            if args.QK_quant and 'self_attn.q_proj.module' in subset and 'self_attn.k_proj.module' in subset:
+                Wq_orig = subset['self_attn.q_proj.module'].weight.data.clone().float()
+                Wk_orig = subset['self_attn.k_proj.module'].weight.data.clone().float()
+
             for name in subset:
                 layer_w_groupsize = args.w_groupsize
                 gptq[name].fasterquant(
@@ -316,6 +326,41 @@ def gptaq_fwrd(model, dataloader, dev, args):
                 )
                 quantizers[f'model.layers.{i}.{name}' if is_llama else f'model.decoder.layers.{i}.{name}'] = gptq[name].quantizer
                 gptq[name].free()
+
+            # Compute per-head QKT squared difference
+            if args.QK_quant and Wq_orig is not None:
+                Wq_quant = subset['self_attn.q_proj.module'].weight.data.float()
+                Wk_quant = subset['self_attn.k_proj.module'].weight.data.float()
+                X = inps.reshape(-1, inps.shape[-1]).float()  # [N, hidden]
+
+                num_heads = model.config.num_attention_heads
+                head_dim = model.config.hidden_size // num_heads
+
+                Wq_orig_h = Wq_orig.reshape(num_heads, head_dim, -1)  # [H, d, D]
+                Wk_orig_h = Wk_orig.reshape(num_heads, head_dim, -1)
+                Wq_quant_h = Wq_quant.reshape(num_heads, head_dim, -1)
+                Wk_quant_h = Wk_quant.reshape(num_heads, head_dim, -1)
+
+                for h in range(num_heads):
+                    Q  = X @ Wq_orig_h[h].t()    # [N, d]
+                    K  = X @ Wk_orig_h[h].t()    # [N, d]
+                    Qq = X @ Wq_quant_h[h].t()   # [N, d]
+                    Kq = X @ Wk_quant_h[h].t()   # [N, d]
+
+                    QtQ  = Q.t()  @ Q            # [d, d]
+                    KtK  = K.t()  @ K
+                    QtQq = Q.t()  @ Qq
+                    KqtK = Kq.t() @ K
+                    KqtKq= Kq.t() @ Kq
+
+                    # ||QK^T - Q'K'^T||_F^2 / N^2  (MSE of attention logits)
+                    N = Q.shape[0]
+                    mse = ((KtK @ QtQ).trace().item() - 2 * (KqtK @ QtQq).trace().item() + (KqtKq @ QtQq).trace().item()) / (N * N)
+                    qk_records.append((i, h, mse))
+
+                del Wq_orig, Wk_orig, Wq_quant, Wk_quant
+                del X, Q, K, Qq, Kq
+                torch.cuda.empty_cache()
 
         for j in range(args.nsamples):
             if is_llama:
@@ -330,6 +375,14 @@ def gptaq_fwrd(model, dataloader, dev, args):
         torch.cuda.empty_cache()
 
         inps, outs = outs, inps
+
+    if args.QK_quant and qk_records is not None:
+        csv_path = os.path.join(args.save_path, 'QK.csv')
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['layer', 'head', 'sq_diff'])
+            writer.writerows(qk_records)
+        logging.info(f'QKT analysis saved to {csv_path}')
 
     model.config.use_cache = use_cache
     utils.cleanup_memory(verbos=True)

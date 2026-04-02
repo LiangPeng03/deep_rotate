@@ -13,7 +13,7 @@ $HOME/.conda/envs/awq/bin/python main.py --model facebook/opt-125m \
  --w_asym \
  --asym_calibrate \
  --w_clip \
- --act_order \
+ --QK_quant \
  --rotate \
  --rotate_mode random \
  --rotation_seed 0

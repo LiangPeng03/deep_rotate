@@ -1,0 +1,69 @@
+WARNING: Warning: OPT-125M/1.3B is only for debugging purposes!!
+Arguments: 
+{'QK_quant': True,
+ 'a_asym': False,
+ 'a_bits': 16,
+ 'a_clip_ratio': 1.0,
+ 'a_groupsize': -1,
+ 'act_order': False,
+ 'asym_calibrate': True,
+ 'bsz': 32,
+ 'cal_dataset': 'c4',
+ 'capture_layer_io': False,
+ 'distribute': False,
+ 'enable_aq_calibration': False,
+ 'eval_dataset': 'wikitext2',
+ 'fp32_had': False,
+ 'hf_token': None,
+ 'int8_down_proj': False,
+ 'k_asym': False,
+ 'k_bits': 16,
+ 'k_clip_ratio': 1.0,
+ 'k_groupsize': -1,
+ 'k_pre_rope': False,
+ 'layer_idx': 10,
+ 'lm_eval': False,
+ 'lm_eval_batch_size': 32,
+ 'load_qmodel_path': None,
+ 'model': 'facebook/opt-125m',
+ 'nsamples': 128,
+ 'percdamp': 0.01,
+ 'rotate': True,
+ 'rotate_mode': 'random',
+ 'rotation_seed': 0,
+ 'save_name': '20260402_190218',
+ 'save_path': '/home/pengliang/Desktop/2gptaq/experiments/facebook/opt-125m/20260402_190218',
+ 'save_qmodel_path': None,
+ 'seed': 0,
+ 'static_groups': False,
+ 'tasks': ['piqa',
+           'hellaswag',
+           'arc_easy',
+           'arc_challenge',
+           'winogrande',
+           'boolq'],
+ 'v_asym': False,
+ 'v_bits': 16,
+ 'v_clip_ratio': 1.0,
+ 'v_groupsize': -1,
+ 'w_asym': True,
+ 'w_bits': 3,
+ 'w_clip': True,
+ 'w_groupsize': 256,
+ 'w_rtn': False,
+ 'wandb': False,
+ 'wandb_id': None,
+ 'wandb_project': None}
+------------------------------------------------------------
+---> Loading facebook/opt-125m Model with seq_len: 2048
+GPU memory (from rotate_model): 0.61 -> 0.02 GB (-0.59 GB)
+GPU memory (from main): 0.06 -> 0.02 GB (-0.04 GB)
+-----GPTAQ Quantization-----
+QKT analysis saved to /home/pengliang/Desktop/2gptaq/experiments/facebook/opt-125m/20260402_190218/QK.csv
+GPU memory (from gptaq_fwrd): 1.21 -> 1.21 GB (0.00 GB)
+-----GPTAQ Quantization Done-----
+
+
+WIKITEXT2 PPL: 35.987
+
+WIKITEXT2 PPL: 32.675

@@ -174,6 +174,8 @@ def parser_gen():
     parser.add_argument('--capture_layer_io', action=argparse.BooleanOptionalAction, default=False,
                         help='Capture the input and output of the specified decoder layer and dump into a file')
     parser.add_argument('--layer_idx', type=int, default=10, help='Which decoder layer to capture')
+    parser.add_argument('--QK_quant', action=argparse.BooleanOptionalAction, default=False,
+                        help='Record per-head QKT squared difference between original and quantized weights during GPTAQ')
 
     # LM Eval Arguments
     parser.add_argument("--lm_eval", action="store_true", help="Evaluate the model on LM Eval tasks.")
