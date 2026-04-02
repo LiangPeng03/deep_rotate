@@ -256,6 +256,9 @@ def gptaq_fwrd(model, dataloader, dev, args):
         layer = layers[i].to(dev)
         full = quant_utils.find_qlayers(layer, layers=[torch.nn.Linear])
 
+        # 保存当前层的全精度输入（fp_inps 会被层前向传播覆盖为输出）
+        fp_inps_for_qk = fp_inps.cpu().clone()
+
         bits_config = quant_utils.disable_act_quant(layer)
         fp_inputs_cache.add_hook(full)
 
@@ -331,36 +334,67 @@ def gptaq_fwrd(model, dataloader, dev, args):
             if args.QK_quant and Wq_orig is not None:
                 Wq_quant = subset['self_attn.q_proj.module'].weight.data.float()
                 Wk_quant = subset['self_attn.k_proj.module'].weight.data.float()
-                X = inps.reshape(-1, inps.shape[-1]).float()  # [N, hidden]
 
                 num_heads = model.config.num_attention_heads
                 head_dim = model.config.hidden_size // num_heads
+                num_kv_heads = getattr(model.config, 'num_key_value_heads', num_heads)
+                num_kv_groups = num_heads // num_kv_heads
 
-                Wq_orig_h = Wq_orig.reshape(num_heads, head_dim, -1)  # [H, d, D]
-                Wk_orig_h = Wk_orig.reshape(num_heads, head_dim, -1)
+                Wq_orig_h = Wq_orig.reshape(num_heads, head_dim, -1)
+                Wk_orig_h = Wk_orig.reshape(num_kv_heads, head_dim, -1)
                 Wq_quant_h = Wq_quant.reshape(num_heads, head_dim, -1)
-                Wk_quant_h = Wk_quant.reshape(num_heads, head_dim, -1)
+                Wk_quant_h = Wk_quant.reshape(num_kv_heads, head_dim, -1)
+
+                # GQA/MQA: 复制 KV 头以对齐 Q 头
+                if num_kv_groups > 1:
+                    Wk_orig_h = Wk_orig_h.repeat_interleave(num_kv_groups, dim=0)
+                    Wk_quant_h = Wk_quant_h.repeat_interleave(num_kv_groups, dim=0)
+
+                # X_orig: 当前层的全精度输入（保存在CPU，分块搬到GPU计算）
+                X_orig_cpu = fp_inps_for_qk.reshape(-1, fp_inps_for_qk.shape[-1]).float()
+                # X_quant: 当前层的量化输入（已在GPU）
+                X_quant = inps.reshape(-1, inps.shape[-1]).float()
+
+                # 分块大小：控制每块在GPU上的内存占用
+                chunk_size = max(1, X_quant.shape[0] // 8)
 
                 for h in range(num_heads):
-                    Q  = X @ Wq_orig_h[h].t()    # [N, d]
-                    K  = X @ Wk_orig_h[h].t()    # [N, d]
-                    Qq = X @ Wq_quant_h[h].t()   # [N, d]
-                    Kq = X @ Wk_quant_h[h].t()   # [N, d]
+                    # 累加器（每个头的 QK 指标累加）
+                    _QtQ = torch.zeros(head_dim, head_dim, device=dev)
+                    _KtK = torch.zeros(head_dim, head_dim, device=dev)
+                    _QtQq = torch.zeros(head_dim, head_dim, device=dev)
+                    _QqtQq = torch.zeros(head_dim, head_dim, device=dev)
+                    _KqtK = torch.zeros(head_dim, head_dim, device=dev)
+                    _KqtKq = torch.zeros(head_dim, head_dim, device=dev)
+                    N_total = 0
 
-                    QtQ   = Q.t()  @ Q            # [d, d]
-                    KtK   = K.t()  @ K
-                    QtQq  = Q.t()  @ Qq
-                    QqtQq = Qq.t() @ Qq
-                    KqtK  = Kq.t() @ K
-                    KqtKq = Kq.t() @ Kq
+                    for start in range(0, X_quant.shape[0], chunk_size):
+                        end = min(start + chunk_size, X_quant.shape[0])
+                        X_orig_chunk = X_orig_cpu[start:end].to(dev)
+                        X_quant_chunk = X_quant[start:end]
 
-                    # ||QK^T - Q'K'^T||_F^2 / N^2  (MSE of attention logits)
-                    N = Q.shape[0]
-                    mse = ((KtK @ QtQ).trace().item() - 2 * (KqtK @ QtQq).trace().item() + (KqtKq @ QqtQq).trace().item()) / (N * N)
+                        Q  = X_orig_chunk @ Wq_orig_h[h].t()
+                        K  = X_orig_chunk @ Wk_orig_h[h].t()
+                        Qq = X_quant_chunk @ Wq_quant_h[h].t()
+                        Kq = X_quant_chunk @ Wk_quant_h[h].t()
+
+                        _QtQ   += Q.t()  @ Q
+                        _KtK   += K.t()  @ K
+                        _QtQq  += Q.t()  @ Qq
+                        _QqtQq += Qq.t() @ Qq
+                        _KqtK  += Kq.t() @ K
+                        _KqtKq += Kq.t() @ Kq
+                        N_total += Q.shape[0]
+
+                        del X_orig_chunk, Q, K, Qq, Kq
+
+                    mse = ((_KtK @ _QtQ).trace().item()
+                           - 2 * (_KqtK @ _QtQq).trace().item()
+                           + (_KqtKq @ _QqtQq).trace().item()) / (N_total * N_total)
                     qk_records.append((i, h, mse))
 
                 del Wq_orig, Wk_orig, Wq_quant, Wk_quant
-                del X, Q, K, Qq, Kq
+                del X_orig_cpu, X_quant
                 torch.cuda.empty_cache()
 
         for j in range(args.nsamples):
