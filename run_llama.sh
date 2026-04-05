@@ -23,7 +23,7 @@ export CUDA_VISIBLE_DEVICES=$gpu_id
 
 # meta-llama/Llama-2-7b-hf\
 
-python main.py --model meta-llama/Llama-2-7b-hf\
+python main.py --model meta-llama/Meta-Llama-3-8B\
  --w_bits 3 \
  --w_groupsize 256 \
  --cal_dataset c4 \
@@ -35,4 +35,5 @@ python main.py --model meta-llama/Llama-2-7b-hf\
  --asym_calibrate \
  --bsz 1 \
  --QK_quant \
+ --QK_alpha 1.0 \
  --rotate \

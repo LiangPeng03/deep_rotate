@@ -26,6 +26,11 @@ class GPTAQ:
         self.dXXT = torch.zeros((self.columns, self.columns), device=self.dev)
         self.nsamples = 0
         self.fp_inp = []
+        # QK-compensated quantization attributes
+        self.QK_quant = False
+        self.X_QK = None  # [d, num_heads*d_k] = [d, hidden_size]: low-rank QK factor
+        self.W_q_groups = None  # List of W_q for each group [num_kv_heads, num_kv_groups*d_k, d]
+        self.alpha_QK = 1.0
 
     def add_batch(self, inp, out):
 
@@ -63,6 +68,29 @@ class GPTAQ:
         W[:, dead] = 0
         self.dXXT[:, dead] = 0
 
+        # Apply QK-compensated joint Hessian if enabled
+        if self.QK_quant and self.W_q_groups is not None:
+            # Compute H_QK = sum_g W_q_g.T @ W_q_g (low-rank Hessian in input space)
+            # This is derived from: X_Q^{(g)} = X^T @ W_q_g.T, and H_QK = sum_g X_Q^{(g)} @ X_Q^{(g)}.T
+            # But we use the property: X_Q^{(g)} @ X_Q^{(g)}.T = W_q_g.T @ (X @ X.T) @ W_q_g
+            # Since we already have H ≈ X.T @ X, we compute: H_QK = sum_g W_q_g.T @ W_q_g * scale
+            H_QK = torch.zeros((self.columns, self.columns), device=self.dev)
+            for W_q_g in self.W_q_groups:
+                # W_q_g: [num_kv_groups*head_dim, d] (transposed to [d, num_kv_groups*head_dim])
+                # W_q_g.T @ W_q_g: [d, num_kv_groups*head_dim] @ [num_kv_groups*head_dim, d] = [d, d]
+                H_QK += W_q_g.T @ W_q_g
+            
+            # Scale H_QK to match H's scale (H is already normalized by nsamples)
+            # H has been collected with proper scaling, so we normalize H_QK similarly
+            H_QK = H_QK / H_QK.shape[0] * self.nsamples / math.sqrt(2)
+            
+            # Joint Hessian: H_new = H + alpha * H_QK
+            H = H + self.alpha_QK * H_QK
+            # Mark dead columns again after modification
+            dead = torch.diag(H) == 0
+            H[dead, dead] = 1
+            del H_QK
+
         if static_groups:
             import copy
             groups = []
@@ -88,7 +116,7 @@ class GPTAQ:
         Hinv = torch.cholesky_inverse(Hinv)
         Hinv = torch.linalg.cholesky(Hinv, upper=True)
 
-        # scale it by alpha due to collection of dXXT axnd H
+        # scale it by alpha due to collection of dXXT and H
         P = alpha * ((self.dXXT @ Hinv.T).triu_(diagonal=1)) @ Hinv
         del self.dXXT
 
@@ -142,11 +170,24 @@ class GPTAQ:
             pprint.pprint(self.quantizer.bits, self.quantizer.scale, self.quantizer.zero_point)
             raise ValueError('NaN in weights')
 
+    def set_QK_params(self, W_q_groups, alpha_QK=1.0):
+        """
+        Set QK-compensated quantization parameters for K_proj.
+        
+        Args:
+            W_q_groups: List of W_q for each K head group, each is [num_kv_groups*d_k, d]
+            alpha_QK: Balance coefficient for QK term
+        """
+        self.QK_quant = True
+        self.W_q_groups = [w.to(self.dev) for w in W_q_groups]
+        self.alpha_QK = alpha_QK
+
     def free(self):
         self.H = None
         self.Losses = None
         self.Trace = None
         self.dXXT = None
+        self.W_q_groups = None
         torch.cuda.empty_cache()
         utils.cleanup_memory(verbos=False)
 
@@ -321,13 +362,56 @@ def gptaq_fwrd(model, dataloader, dev, args):
                 Wq_orig = subset['self_attn.q_proj.module'].weight.data.clone().float()
                 Wk_orig = subset['self_attn.k_proj.module'].weight.data.clone().float()
 
+            # Step 1: Quantize q_proj and v_proj first (skip k_proj for now)
             for name in subset:
+                if name == 'self_attn.k_proj.module':
+                    continue  # Skip k_proj, will quantize later
                 layer_w_groupsize = args.w_groupsize
                 gptq[name].fasterquant(
                     percdamp=args.percdamp, groupsize=layer_w_groupsize, actorder=args.act_order,
                     static_groups=args.static_groups
                 )
                 quantizers[f'model.layers.{i}.{name}' if is_llama else f'model.decoder.layers.{i}.{name}'] = gptq[name].quantizer
+
+            # Step 2: Compute QK parameters for K_proj using quantized Wq
+            if args.QK_quant and Wq_orig is not None and 'self_attn.k_proj.module' in subset:
+                # Get model config
+                num_heads = model.config.num_attention_heads
+                head_dim = model.config.hidden_size // num_heads
+                num_kv_heads = getattr(model.config, 'num_key_value_heads', num_heads)
+                num_kv_groups = num_heads // num_kv_heads
+
+                # Use quantized Wq to compute W_q_groups
+                Wq_quant = subset['self_attn.q_proj.module'].weight.data.float()
+                Wq_quant_h = Wq_quant.reshape(num_heads, head_dim, -1)
+
+                # Prepare W_q_groups for each K head group
+                # Each group contains concatenated weights of corresponding Q heads
+                W_q_groups = []
+                for g in range(num_kv_heads):
+                    q_head_start = g * num_kv_groups
+                    q_head_end = (g + 1) * num_kv_groups
+                    # Concatenate W_q for Q heads in this group: [num_kv_groups*d_k, d]
+                    W_q_g = torch.cat([Wq_quant_h[h] for h in range(q_head_start, q_head_end)], dim=0)
+                    W_q_groups.append(W_q_g)
+
+                # Set parameters for k_proj
+                gptq['self_attn.k_proj.module'].set_QK_params(W_q_groups, args.QK_alpha)
+
+                del W_q_groups, Wq_quant_h
+                torch.cuda.empty_cache()
+
+            # Step 3: Quantize k_proj last
+            if 'self_attn.k_proj.module' in subset:
+                layer_w_groupsize = args.w_groupsize
+                gptq['self_attn.k_proj.module'].fasterquant(
+                    percdamp=args.percdamp, groupsize=layer_w_groupsize, actorder=args.act_order,
+                    static_groups=args.static_groups
+                )
+                quantizers[f'model.layers.{i}.self_attn.k_proj.module' if is_llama else f'model.decoder.layers.{i}.self_attn.k_proj.module'] = gptq['self_attn.k_proj.module'].quantizer
+
+            # Free all gptq objects
+            for name in subset:
                 gptq[name].free()
 
             # Compute per-head QKT squared difference
