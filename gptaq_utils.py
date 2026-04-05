@@ -358,9 +358,15 @@ def gptaq_fwrd(model, dataloader, dev, args):
             # Save original Wq, Wk before quantization if QK_quant is enabled
             Wq_orig = None
             Wk_orig = None
+            bq_orig = None  # Q bias from original model
+            bq_quant = None  # Q bias from quantized model
             if args.QK_quant and 'self_attn.q_proj.module' in subset and 'self_attn.k_proj.module' in subset:
                 Wq_orig = subset['self_attn.q_proj.module'].weight.data.clone().float()
                 Wk_orig = subset['self_attn.k_proj.module'].weight.data.clone().float()
+                # Save original Q bias if exists
+                q_module = subset['self_attn.q_proj.module']
+                if q_module.bias is not None:
+                    bq_orig = q_module.bias.data.clone().float()
 
             # Step 1: Quantize q_proj and v_proj first (skip k_proj for now)
             for name in subset:
@@ -383,6 +389,10 @@ def gptaq_fwrd(model, dataloader, dev, args):
 
                 # Use quantized Wq to compute W_q_groups
                 Wq_quant = subset['self_attn.q_proj.module'].weight.data.float()
+                # Save quantized Q bias if exists
+                q_module = subset['self_attn.q_proj.module']
+                if q_module.bias is not None:
+                    bq_quant = q_module.bias.data.clone().float()
                 Wq_quant_h = Wq_quant.reshape(num_heads, head_dim, -1)
 
                 # Prepare W_q_groups for each K head group
@@ -434,6 +444,12 @@ def gptaq_fwrd(model, dataloader, dev, args):
                     Wk_orig_h = Wk_orig_h.repeat_interleave(num_kv_groups, dim=0)
                     Wk_quant_h = Wk_quant_h.repeat_interleave(num_kv_groups, dim=0)
 
+                # Prepare Q bias per head (reshape to [num_heads, head_dim])
+                if bq_orig is not None:
+                    bq_orig_h = bq_orig.reshape(num_heads, head_dim)
+                if bq_quant is not None:
+                    bq_quant_h = bq_quant.reshape(num_heads, head_dim)
+
                 # X_orig: 当前层的全精度输入（保存在CPU，分块搬到GPU计算）
                 X_orig_cpu = fp_inps_for_qk.reshape(-1, fp_inps_for_qk.shape[-1]).float()
                 # X_quant: 当前层的量化输入（已在GPU）
@@ -462,6 +478,12 @@ def gptaq_fwrd(model, dataloader, dev, args):
                         Qq = X_quant_chunk @ Wq_quant_h[h].t()
                         Kq = X_quant_chunk @ Wk_quant_h[h].t()
 
+                        # Add Q bias to both original and quantized Q
+                        if bq_orig is not None:
+                            Q = Q + bq_orig_h[h]
+                        if bq_quant is not None:
+                            Qq = Qq + bq_quant_h[h]
+
                         _QtQ   += Q.t()  @ Q
                         _KtK   += K.t()  @ K
                         _QtQq  += Q.t()  @ Qq
@@ -478,6 +500,10 @@ def gptaq_fwrd(model, dataloader, dev, args):
                     qk_records.append((i, h, mse))
 
                 del Wq_orig, Wk_orig, Wq_quant, Wk_quant
+                if bq_orig is not None:
+                    del bq_orig, bq_orig_h
+                if bq_quant is not None:
+                    del bq_quant, bq_quant_h
                 del X_orig_cpu, X_quant
                 torch.cuda.empty_cache()
 
