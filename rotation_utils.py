@@ -199,8 +199,8 @@ def rotate_mlp_output(layer, Q, model_type):
     dtype = W.weight.data.dtype
     W_ = W.weight.data.to(device=utils.DEV, dtype=torch.float64)
     W.weight.data = torch.matmul(Q.T, W_).to(device="cpu", dtype=dtype)
-    # Only apply Hadamard for Llama models; use pure rotation for OPT
-    if model_type == model_utils.LLAMA_MODEL:
+    # Apply Hadamard for Llama and OPT models
+    if model_type in [model_utils.LLAMA_MODEL, model_utils.OPT_MODEL]:
         apply_exact_had_to_linear(W, had_dim=-1, output=False) #apply exact (inverse) hadamard on the weights of mlp output
     if W.bias is not None:
         b = W.bias.data.to(device=utils.DEV, dtype=torch.float64)
@@ -245,7 +245,7 @@ def rotate_head(model, Q: torch.Tensor) -> None:
     W.weight.data = torch.matmul(W_, Q).to(device="cpu", dtype=dtype)
 
 def rotate_ov_proj(layer, model_type, head_num, head_dim):
-    # Only apply Hadamard for Llama models; use pure rotation for OPT
+    # Apply Hadamard for Llama models and OPT models
     if model_type == model_utils.LLAMA_MODEL:
         v_proj = layer.self_attn.v_proj
         o_proj = layer.self_attn.o_proj
@@ -254,8 +254,12 @@ def rotate_ov_proj(layer, model_type, head_num, head_dim):
         # o_proj: apply FULL Hadamard on input (to cancel out the concatenated head transforms)
         apply_exact_had_to_linear(o_proj, had_dim=-1, output=False)
     elif model_type == model_utils.OPT_MODEL:
-        # For OPT, skip Hadamard entirely - rotation already applied in rotate_attention_inputs/rotate_attention_output
-        pass
+        v_proj = layer.self_attn.v_proj
+        out_proj = layer.self_attn.out_proj
+        # v_proj: apply head-dim Hadamard on output (each head independently)
+        apply_exact_had_to_linear(v_proj, had_dim=head_dim, output=True)
+        # out_proj: apply FULL Hadamard on input (to cancel out the concatenated head transforms)
+        apply_exact_had_to_linear(out_proj, had_dim=-1, output=False)
     else:
         raise ValueError(f'Unknown model type {model_type}')
 

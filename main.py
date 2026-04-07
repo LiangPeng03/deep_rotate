@@ -80,16 +80,17 @@ def main():
         quant_utils.add_actquant(model) #Add Activation Wrapper to the model
         qlayers = quant_utils.find_qlayers(model)
         
-        # Only apply Hadamard rotation for Llama models
-        if "llama" in args.model:
+        # Apply Hadamard rotation for Llama models and OPT models
+        if "llama" in args.model or "opt" in args.model:
             for name in qlayers:
-                if 'down_proj' in name:
-                    had_K, K = hadamard_utils.get_hadK(model.config.intermediate_size)
+                if 'down_proj' in name or 'fc2' in name:
+                    config_dim = model.config.intermediate_size if "llama" in args.model else model.config.ffn_dim
+                    had_K, K = hadamard_utils.get_hadK(config_dim)
                     qlayers[name].online_full_had = True
                     qlayers[name].had_K = had_K
                     qlayers[name].K = K
                     qlayers[name].fp32_had = args.fp32_had
-                if 'o_proj' in name:
+                if 'o_proj' in name or 'out_proj' in name:
                     had_K, K = hadamard_utils.get_hadK(model.config.num_attention_heads)
                     qlayers[name].online_partial_had = True
                     qlayers[name].had_K = had_K
