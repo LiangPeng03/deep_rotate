@@ -46,7 +46,7 @@ class GPTAQ:
         del self.fp_inp[0]
 
     def fasterquant(
-            self, blocksize=256, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, alpha=0.25
+            self, blocksize=256, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, alpha=0.5
     ):
         W = self.layer.weight.data.clone()
         W = W.float()

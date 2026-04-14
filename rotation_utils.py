@@ -249,17 +249,66 @@ def rotate_ov_proj(layer, model_type, head_num, head_dim):
     if model_type == model_utils.LLAMA_MODEL:
         v_proj = layer.self_attn.v_proj
         o_proj = layer.self_attn.o_proj
+        
         # v_proj: apply head-dim Hadamard on output (each head independently)
         apply_exact_had_to_linear(v_proj, had_dim=head_dim, output=True)
-        # o_proj: apply FULL Hadamard on input (to cancel out the concatenated head transforms)
-        apply_exact_had_to_linear(o_proj, had_dim=-1, output=False)
+        
+        if head_num == 9:
+            import math
+            import fast_hadamard_transform
+            from hadamard_utils import get_hadK
+            
+            # Step 1: apply head-dim Hadamard on input FIRST!
+            W = o_proj.weight.data.float().cuda()
+            out_features = W.shape[0]
+            W_shape = W.shape
+            
+            W = fast_hadamard_transform.hadamard_transform(
+                W.reshape(out_features * 9, head_dim), 
+                scale=1/math.sqrt(head_dim)
+            ).reshape(out_features, 9, head_dim)
+            
+            # Step 2: apply R_9 on the heads!
+            had9, _ = get_hadK(9)
+            R9 = had9 / 3.0
+            R9 = R9.to(W.device).to(W.dtype)
+            
+            W = torch.einsum('hp,opd->ohd', R9, W)
+            o_proj.weight.data = W.reshape(W_shape).to(o_proj.weight.data.dtype)
+            
+        else:
+            # o_proj: apply FULL Hadamard on input (to cancel out the concatenated head transforms)
+            apply_exact_had_to_linear(o_proj, had_dim=-1, output=False)
+            
     elif model_type == model_utils.OPT_MODEL:
         v_proj = layer.self_attn.v_proj
         out_proj = layer.self_attn.out_proj
-        # v_proj: apply head-dim Hadamard on output (each head independently)
+        
         apply_exact_had_to_linear(v_proj, had_dim=head_dim, output=True)
-        # out_proj: apply FULL Hadamard on input (to cancel out the concatenated head transforms)
-        apply_exact_had_to_linear(out_proj, had_dim=-1, output=False)
+        
+        if head_num == 9:
+            import math
+            import fast_hadamard_transform
+            from hadamard_utils import get_hadK
+            
+            W = out_proj.weight.data.float().cuda()
+            out_features = W.shape[0]
+            W_shape = W.shape
+            
+            W = fast_hadamard_transform.hadamard_transform(
+                W.reshape(out_features * 9, head_dim), 
+                scale=1/math.sqrt(head_dim)
+            ).reshape(out_features, 9, head_dim)
+            
+            had9, _ = get_hadK(9)
+            R9 = had9 / 3.0
+            R9 = R9.to(W.device).to(W.dtype)
+            
+            W = torch.einsum('hp,opd->ohd', R9, W)
+            out_proj.weight.data = W.reshape(W_shape).to(out_proj.weight.data.dtype)
+            
+        else:
+            apply_exact_had_to_linear(out_proj, had_dim=-1, output=False)
     else:
         raise ValueError(f'Unknown model type {model_type}')
 

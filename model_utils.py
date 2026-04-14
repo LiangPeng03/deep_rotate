@@ -65,9 +65,9 @@ def get_opt(model_name):
 def get_model(
     model_name, hf_token=None
 ):
-    if 'llama' in model_name:
+    if 'llama' in model_name.lower() or 'smollm' in model_name.lower():
         return get_llama(model_name, hf_token)
-    elif 'opt' in model_name:
+    elif 'opt' in model_name.lower():
         return get_opt(model_name)
     else:
         raise ValueError(f'Unknown model {model_name}')

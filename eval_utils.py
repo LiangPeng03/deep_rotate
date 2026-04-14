@@ -12,10 +12,10 @@ def evaluator(model, testenc, dev, args):
 
     model.eval()
 
-    if 'opt' in args.model:
+    if 'opt' in args.model.lower():
         opt_type = True
         llama_type = False
-    elif 'meta' in args.model:
+    elif 'meta' in args.model.lower() or 'llama' in args.model.lower() or 'smollm' in args.model.lower():
         llama_type = True
         opt_type = False
     else:
@@ -36,6 +36,8 @@ def evaluator(model, testenc, dev, args):
     elif llama_type:
         layers = model.model.layers
         model.model.embed_tokens = model.model.embed_tokens.to(dev)
+        if hasattr(model.model, 'rotary_emb'):
+            model.model.rotary_emb = model.model.rotary_emb.to(dev)
 
     layers[0] = layers[0].to(dev)
 
@@ -86,6 +88,8 @@ def evaluator(model, testenc, dev, args):
             model.model.decoder.project_in = model.model.decoder.project_in.cpu()
     elif llama_type:
         model.model.embed_tokens = model.model.embed_tokens.cpu()
+        if hasattr(model.model, 'rotary_emb'):
+            model.model.rotary_emb = model.model.rotary_emb.cpu()
         position_ids = cache['position_ids']
 
     torch.cuda.empty_cache()

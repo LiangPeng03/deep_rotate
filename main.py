@@ -16,7 +16,7 @@ def add_aq(model, args):
     if args.a_bits < 16 or args.v_bits < 16:
         qlayers = quant_utils.find_qlayers(model, layers=[quant_utils.ActQuantWrapper])
         down_proj_groupsize = -1
-        if args.a_groupsize > 0 and "llama" in args.model:
+        if args.a_groupsize > 0 and ("llama" in args.model.lower() or "smollm" in args.model.lower()):
             down_proj_groupsize = utils.llama_down_proj_groupsize(model, args.a_groupsize)
 
         for name in qlayers:
@@ -81,10 +81,10 @@ def main():
         qlayers = quant_utils.find_qlayers(model)
         
         # Apply Hadamard rotation for Llama models and OPT models
-        if "llama" in args.model or "opt" in args.model:
+        if "llama" in args.model.lower() or "opt" in args.model.lower() or "smollm" in args.model.lower():
             for name in qlayers:
                 if 'down_proj' in name or 'fc2' in name:
-                    config_dim = model.config.intermediate_size if "llama" in args.model else model.config.ffn_dim
+                    config_dim = model.config.intermediate_size if ("llama" in args.model.lower() or "smollm" in args.model.lower()) else model.config.ffn_dim
                     had_K, K = hadamard_utils.get_hadK(config_dim)
                     qlayers[name].online_full_had = True
                     qlayers[name].had_K = had_K

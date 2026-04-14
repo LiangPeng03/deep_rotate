@@ -2,6 +2,14 @@ import torch, math
 import fast_hadamard_transform
 # Adapted from https://github.com/Cornell-RelaxML/quip-sharp/blob/main/lib/utils/matmul_had.py
 
+def get_had9():
+    torch.manual_seed(0)
+    random_matrix = torch.randn(9, 9, dtype=torch.float64)
+    q, r = torch.linalg.qr(random_matrix)
+    q *= torch.sign(torch.diag(r)).unsqueeze(0)
+    return q.float() * 3.0
+
+
 def get_hadK(n, transpose=False):
     hadK, K = None, None
     if n % 172 == 0:  # llama-2-7b up
@@ -48,6 +56,9 @@ def get_hadK(n, transpose=False):
         assert (is_pow2(n // 12))
         K = 12
         hadK = get_had12().T if transpose else get_had12()
+    elif n == 9:
+        K = 9
+        hadK = get_had9().T if transpose else get_had9()
     else:
         assert (is_pow2(n))
         K = 1
