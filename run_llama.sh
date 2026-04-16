@@ -21,7 +21,7 @@ export CUDA_VISIBLE_DEVICES=$gpu_id
 #  --enable_aq_calibration \
 #  --rotate
 
-python main.py --model meta-llama/Meta-Llama-3-8B\
+python main.py --model meta-llama/Llama-2-7b-hf\
  --w_bits 3 \
  --w_groupsize 256 \
  --cal_dataset c4 \

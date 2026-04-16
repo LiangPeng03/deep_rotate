@@ -4,7 +4,7 @@ gpu_id=1
 export CUDA_VISIBLE_DEVICES=$gpu_id
 
 $HOME/.conda/envs/awq/bin/python main.py --model HuggingFaceTB/SmolLM2-135M \
- --w_bits 3 \
+ --w_bits 16 \
  --w_groupsize 256 \
  --cal_dataset c4 \
  --a_bits 16 \
@@ -13,4 +13,4 @@ $HOME/.conda/envs/awq/bin/python main.py --model HuggingFaceTB/SmolLM2-135M \
  --w_asym \
  --asym_calibrate \
  --w_clip \
- --rotate
+#  --rotate

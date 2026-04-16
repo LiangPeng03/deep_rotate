@@ -46,7 +46,7 @@ class GPTAQ:
         del self.fp_inp[0]
 
     def fasterquant(
-            self, blocksize=256, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, alpha=0.5
+            self, blocksize=256, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, alpha='auto'
     ):
         W = self.layer.weight.data.clone()
         W = W.float()
@@ -86,8 +86,16 @@ class GPTAQ:
         Hinv = torch.cholesky_inverse(Hinv)
         Hinv = torch.linalg.cholesky(Hinv, upper=True)
 
-        # scale it by alpha due to collection of dXXT axnd H
-        P = alpha * ((self.dXXT @ Hinv.T).triu_(diagonal=1)) @ Hinv
+        if alpha == 'auto':
+            # Adaptive alpha based on SNR of dXXT relative to H
+            signal_ratio = torch.norm(self.dXXT, p='fro') / torch.norm(H, p='fro')
+            # Clamp to [0, 1.0] max
+            alpha_val = min(signal_ratio.item(), 1.0)
+        else:
+            alpha_val = alpha
+
+        # scale it by alpha due to collection of dXXT and H
+        P = alpha_val * ((self.dXXT @ Hinv.T).triu_(diagonal=1)) @ Hinv
         del self.dXXT
 
         for i1 in range(0, self.columns, blocksize):
